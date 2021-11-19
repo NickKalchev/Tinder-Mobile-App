@@ -1,4 +1,4 @@
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { View, Text } from 'react-native';
 import * as Google from 'expo-google-app-auth';
 import {
@@ -7,6 +7,7 @@ import {
     signInWithCredential,
     signOut
 } from '@firebase/auth';
+import { auth } from '../fireebase';
 
 const AuthContext = createContext({});
 
@@ -18,27 +19,54 @@ const config = {
 }
 
 export const AuthProvider = ({ children }) => {
+    const [error, setError] = useState(null);
+    const [user, setUser] = useState(null);
+    const [initialLoading, setInitialLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
 
+    useEffect(() => onAuthStateChanged(auth, (user) => {
+          if(user) {
+             setUser(user);
+          } else {
+              setUser(null);
+          };
 
+          setInitialLoading(false);
+      }), []);
 
     const signInWithGoogle = async () => {
+        setLoading(true);
+
         await Google.logInAsync(config).then(async (loginResult) => {
             if(loginResult.type === 'success'){
                 const { idToken, accessToken } = loginResult;
                 const credentials = GoogleAuthProvider.credential(idToken, accessToken);
-                await signInWithCredential(credentials);
+                await signInWithCredential(auth, credentials);
             }
 
             return Promise.reject();
-        });
+        })
+        .catch(error => setError(error))
+        .finally(() => setLoading(false));
     };
 
+    const logOut = () => {
+        setLoading(true);
+        signOut(auth).catch(error => setError(error)).finally(() => setLoading(false));
+    };
+
+    const memoedValue = useMemo(() => ({
+        user,
+        loading,
+        error,
+        signInWithGoogle,
+        logOut
+    }), [user, error, loading]);
+
+
     return (
-        <AuthContext.Provider value={{
-            user: null,
-            signInWithGoogle
-        }}>
-           {children}
+        <AuthContext.Provider value={memoedValue}>
+           {!initialLoading && children}
         </AuthContext.Provider>
     )
 };
