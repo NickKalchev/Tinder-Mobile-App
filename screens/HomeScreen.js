@@ -1,5 +1,10 @@
 import { useNavigation } from "@react-navigation/core";
-import React, { useLayoutEffect } from "react";
+import React, {
+  useLayoutEffect,
+  useRef,
+  useEffect,
+  useState,
+} from "react";
 import {
   View,
   Text,
@@ -7,7 +12,7 @@ import {
   SafeAreaView,
   Image,
   TouchableOpacity,
-  StyleSheet
+  StyleSheet,
 } from "react-native";
 import useAuth from "../hooks/useAuth";
 import tw from "tailwind-rn";
@@ -17,36 +22,16 @@ import {
   Ionicons,
 } from "@expo/vector-icons";
 import Swiper from "react-native-deck-swiper";
-
-const DUMMY_DATA = [
-  {
-    firstName: 'Elon',
-    lastName: 'Musk',
-    occupation: 'Software Genius and XSpace owner',
-    photoURL: 'https://citaty.net/media/authors/elon-musk_hP29QNM.jpeg',
-    age: 45,
-    id: 1
-  },
-  {
-    firstName: 'Nick',
-    lastName: 'Kalchev',
-    occupation: 'Software Developer',
-    photoURL: 'https://media-exp1.licdn.com/dms/image/C5603AQGrjA0HbL0VYA/profile-displayphoto-shrink_800_800/0/1589376925679?e=1642636800&v=beta&t=DLp7QeTtw_1rAv3VK8uewjfz4Hp7YV4h8rRWbfA7n0E',
-    age: 28,
-    id: 2
-  },{
-    firstName: 'Elon',
-    lastName: 'Musk',
-    occupation: 'Software Genius and XSpace owner',
-    photoURL: 'https://citaty.net/media/authors/elon-musk_hP29QNM.jpeg',
-    age: 45,
-    id: 3
-  },
-];
+import emoji from '../assets/emoji.png'
+import { onSnapshot, doc, collection, getDocs, getDoc, setDoc, query, where, serverTimestamp } from '@firebase/firestore';
+import { db } from "../fireebase";
+import generateID from '../lib/generateID';
 
 const HomeScreen = () => {
   const navigation = useNavigation();
   const { logOut, user } = useAuth();
+  const [profiles, setProfiles] = useState([]);
+  const swipeRef = useRef(null);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -54,28 +39,123 @@ const HomeScreen = () => {
     });
   }, []);
 
+  useEffect(() => 
+    onSnapshot(doc(db, 'users', user.uid), snapshot => {
+    if(!snapshot.exists()){
+      navigation.navigate('Modal');
+    }
+  }), [])
+
+  useEffect(() => {
+    let unsubcribe;
+    
+    const fetchCards = async () => {
+      const passes = await getDocs(collection(db, 'users', user.uid, 'passes')).then((snapshot) => (
+        snapshot.docs.map(doc => doc.id)
+      )).catch((err) => {
+        alert(err.message)
+      });
+
+        const matches = await getDocs(collection(db, 'users', user.uid, 'matches')).then((snapshot) => (
+        snapshot.docs.map(doc => doc.id)
+      )).catch((err) => {
+        alert(err.message)
+      });
+
+      const passedUsers = passes.length > 0 ? passes : ['testing query'];
+      const matchedUsers = matches.length > 0 ? matches : ['testing query'];
+
+      unsubcribe = onSnapshot(query(collection(db, 'users'), where('id', 'not-in', [...passedUsers, ...matchedUsers])), snapshot => {
+        setProfiles(snapshot.docs.filter(doc => doc.id !== user.uid).map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })));
+      });
+    };
+
+    fetchCards();
+    return unsubcribe;
+  }, [db])
+
+  const swipeLeft = (cardIndex) => {
+    if(!profiles[cardIndex]) return;
+
+    const userSwiped = profiles[cardIndex];
+    console.log(`You swiped pass on ${userSwiped.displayName}`);
+
+    setDoc(doc(db, 'users', user.uid, 'passes', userSwiped.id), userSwiped);
+  };
+
+  const swipeRight = async(cardIndex) => {
+    if(!profiles[cardIndex]) return;
+
+    const userSwiped = profiles[cardIndex];
+
+    const loggedInProfile = await (
+      await getDoc(doc(db, 'users', user.uid))
+    ).data();
+
+    getDoc(doc(db, 'users', userSwiped.id, 'matches', user.uid)).then((documentSnapshot) => {
+      if(documentSnapshot.exists()) {
+        console.log(`Hooray, you MATCHED with ${userSwiped.displayName}`);
+        setDoc(doc(db, 'users', user.uid, 'matches', userSwiped.id), userSwiped)
+
+        // Create a match
+        setDoc(doc(db, 'madeMatches', generateID(user.uid, userSwiped.id)), {
+          users: {
+            [user.uid]: loggedInProfile,
+            [userSwiped.id]: userSwiped,
+          },
+          usersMatched: [user.uid, userSwiped.id],
+          timestamp: serverTimestamp()
+        });
+
+        navigation.navigate('Match', {
+          loggedInProfile,
+          userSwiped
+        });
+
+      } else {
+        console.log(`You swiped on ${userSwiped.displayName} (${userSwiped.job})`);
+      }
+    }).catch((err) => {
+      alert(err.message)
+    });
+
+    setDoc(doc(db, 'users', user.uid, 'matches', userSwiped.id), userSwiped);
+  };
+
   return (
-    <SafeAreaView style={tw('flex-1')}>
+    <SafeAreaView style={tw("flex-1")}>
       {/* Header */}
       <View
-        style={tw(
-          "flex-row items-center justify-between px-5 top-9 mb-5"
-        )}
+        style={tw("relative top-8 items-center")}
       >
-        <TouchableOpacity onPress={logOut}>
+        <TouchableOpacity
+          style={tw("absolute left-2 top-2")}
+          onPress={logOut}
+        >
           <Image
-            style={tw("h-10 w-10 rounded-full")}
+            style={tw(
+              "h-10 w-10 rounded-full ml-3"
+            )}
             source={{ uri: user.photoURL }}
           />
         </TouchableOpacity>
-        <TouchableOpacity>
+        <TouchableOpacity
+          style={tw("items-center")}
+          onPress={() =>
+            navigation.navigate("Modal")
+          }
+        >
           <Image
-            style={tw("h-14 w-14")}
+            style={tw("h-16 w-16")}
             source={require("../assets/tinder.png")}
           />
         </TouchableOpacity>
 
         <TouchableOpacity
+          style={tw("absolute right-5 top-3")}
           onPress={() =>
             navigation.navigate("Chat")
           }
@@ -89,29 +169,127 @@ const HomeScreen = () => {
       </View>
 
       {/* Cards */}
-      <View style={tw('flex-1 -mt-6')}>
-        <Swiper 
-          containerStyle={{ backgroundColor: 'transparent' }} 
+      <View style={tw("flex-1")}>
+        <Swiper
+          containerStyle={{
+            backgroundColor: "transparent",
+          }}
+          ref={swipeRef}
           stackSize={5}
           cardIndex={0}
           animateCardOpacity
+          onSwipedLeft={(cardIndex) => {
+            swipeLeft(cardIndex)
+          }}
+          onSwipedRight={(cardIndex) => {
+            swipeRight(cardIndex)
+          }}
           verticalSwipe={false}
-          cards={DUMMY_DATA} renderCard={card => (
-            <View key={card.id} style={tw('bg-white h-3/4 rounded-xl relative')}>
-              <Image 
-                style={tw('absolute h-full w-full rounded-xl top-0')} 
-                source={{ uri: card.photoURL }} 
+          overlayLabels={{
+            left: {
+              title: "NOPE",
+              style: {
+                label: {
+                  textAlign: "right",
+                  color: "red",
+                },
+              },
+            },
+            right: {
+              title: "MATCH",
+              style: {
+                label: {
+                  color: "#44f425",
+                },
+              },
+            },
+          }}
+          cards={profiles}
+          renderCard={(card) => card ? (
+            <View
+              key={card.id}
+              style={tw(
+                "bg-white h-3/4 rounded-xl relative"
+              )}
+            >
+              <Image
+                style={tw(
+                  "absolute h-full w-full rounded-xl top-0"
+                )}
+                source={{ uri: card.photoURL }}
               />
-
-              <View style={[tw('absolute bottom-0 bg-white w-full h-20 flex-row justify-between items-between px-6 py-2 rounded-b-xl'), styles.cardShadow]}> 
+              <View
+                style={[
+                  tw(
+                    "absolute bottom-0 bg-white w-full h-20 flex-row justify-between items-between px-6 py-2 rounded-b-xl"
+                  ),
+                  styles.cardShadow,
+                ]}
+              >
                 <View>
-                  <Text style={tw('text-xl font-bold')}>{card.firstName} {card.lastName}</Text>
-                  <Text>{card.occupation}</Text>
+                  <Text
+                    style={tw(
+                      "text-xl font-bold"
+                    )}
+                  >
+                    {card.displayName}
+                  </Text>
+                  <Text>{card.job}</Text>
                 </View>
-                  <Text style={tw('text-2xl font-bold')}>{card.age}</Text>
+                <Text
+                  style={tw("text-2xl font-bold")}
+                >
+                  {card.age}
+                </Text>
               </View>
             </View>
-        )} />
+          ) : (
+            <View style={[tw('relative bg-gray-50 h-3/4 rounded-xl justify-center items-center'), styles.cardShadow]}>
+              <Text style={tw('font-bold text-xl pb-5')}>No more profiles❗️</Text>
+              <Image
+              style={tw('h-72 w-full')}
+              height={100}
+              width={100}
+              source={emoji}
+              />
+            </View>
+          )}
+        />
+      </View>
+      <View
+        style={tw(
+          "flex-row flex justify-evenly mb-8"
+        )}
+      >
+        <TouchableOpacity
+          style={tw(
+            "items-center justify-center rounded-full w-20 h-20 bg-red-200"
+          )}
+          onPress={() =>
+            swipeRef.current.swipeLeft()
+          }
+        >
+          <Entypo
+            name="cross"
+            size={38}
+            color="red"
+          />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={tw(
+            "items-center justify-center rounded-full w-20 h-20 bg-green-200"
+          )}
+          onPress={() =>
+            swipeRef.current.swipeRight()
+          }
+        >
+          <AntDesign
+            name="heart"
+            size={32}
+            color="green"
+          />
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -121,13 +299,13 @@ export default HomeScreen;
 
 const styles = StyleSheet.create({
   cardShadow: {
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: {
       width: 0,
-      height: 1
+      height: 1,
     },
     shadowOpacity: 0.2,
     shadowRadius: 1.41,
-    elevation: 2
-  }
+    elevation: 2,
+  },
 });
